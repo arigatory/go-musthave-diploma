@@ -1,0 +1,47 @@
+package config
+
+import (
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func env(m map[string]string) func(string) string {
+	return func(k string) string { return m[k] }
+}
+
+func TestLoadDefaultsAndFlags(t *testing.T) {
+	cfg, err := Load([]string{"-d", "postgres://db", "-r", "http://accrual", "-w", "0"}, env(nil))
+	require.NoError(t, err)
+	assert.Equal(t, DefaultRunAddress, cfg.RunAddress)
+	assert.Equal(t, "postgres://db", cfg.DatabaseURI)
+	assert.Equal(t, "http://accrual", cfg.AccrualSystemAddress)
+	assert.Equal(t, DefaultJWTSecret, cfg.JWTSecret)
+	assert.Equal(t, DefaultTokenTTL, cfg.TokenTTL)
+	assert.Equal(t, 1, cfg.Workers)
+	assert.Equal(t, time.Second, cfg.PollInterval)
+}
+
+func TestLoadEnvOverridesFlags(t *testing.T) {
+	cfg, err := Load([]string{"-a", ":1", "-d", "flag-db", "-r", "flag-acc"}, env(map[string]string{
+		"RUN_ADDRESS":            ":2",
+		"DATABASE_URI":           "env-db",
+		"ACCRUAL_SYSTEM_ADDRESS": "env-acc",
+		"JWT_SECRET":             "s3cret",
+	}))
+	require.NoError(t, err)
+	assert.Equal(t, ":2", cfg.RunAddress)
+	assert.Equal(t, "env-db", cfg.DatabaseURI)
+	assert.Equal(t, "env-acc", cfg.AccrualSystemAddress)
+	assert.Equal(t, "s3cret", cfg.JWTSecret)
+}
+
+func TestLoadErrors(t *testing.T) {
+	_, err := Load(nil, env(nil))
+	assert.ErrorIs(t, err, ErrNoDatabaseURI)
+
+	_, err = Load([]string{"-unknown"}, env(nil))
+	assert.Error(t, err)
+}
