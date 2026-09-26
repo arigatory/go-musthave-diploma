@@ -1,25 +1,74 @@
-# go-musthave-diploma-tpl
+# Гофермарт — накопительная система лояльности
 
-Шаблон репозитория для индивидуального дипломного проекта курса «Go-разработчик»
+HTTP API для регистрации пользователей, загрузки номеров заказов, начисления баллов
+через внешнюю систему расчёта (accrual) и списания баллов. Спецификация — в [SPECIFICATION.md](SPECIFICATION.md).
 
-# Начало работы
+## Запуск
 
-1. Склонируйте репозиторий в любую подходящую директорию на вашем компьютере.
-2. В корне репозитория выполните команду `go mod init <name>` (где `<name>` — адрес вашего репозитория на GitHub без
-   префикса `https://`) для создания модуля
+```sh
+docker compose up -d postgres
+go run ./cmd/gophermart \
+  -a localhost:8080 \
+  -d "postgres://postgres:postgres@localhost:5432/praktikum?sslmode=disable" \
+  -r http://localhost:8081
+```
 
-# Обновление шаблона
+Система расчёта начислений для локальных экспериментов лежит в `cmd/accrual`
+(например, `./cmd/accrual/accrual_darwin_arm64 -a localhost:8081 -d <DATABASE_URI>`).
 
-Чтобы иметь возможность получать обновления автотестов и других частей шаблона, выполните команду:
+### Конфигурация
+
+Переменные окружения имеют приоритет над флагами. Невалидное значение числовой
+переменной или длительности (например, `POLL_INTERVAL=abc`) — ошибка на старте.
+
+| Флаг | Переменная | Описание | По умолчанию |
+|------|------------|----------|--------------|
+| `-a` | `RUN_ADDRESS` | адрес и порт сервиса | `localhost:8080` |
+| `-d` | `DATABASE_URI` | строка подключения к PostgreSQL | — (обязательно) |
+| `-r` | `ACCRUAL_SYSTEM_ADDRESS` | адрес системы расчёта начислений | — |
+| `-s` | `JWT_SECRET` | ключ подписи токенов | dev-значение |
+| `-l` | `LOG_LEVEL` | уровень логирования | `info` |
+| `-t` | `TOKEN_TTL` | время жизни токена | `24h` |
+| `-w` | `ACCRUAL_WORKERS` | число параллельных запросов к accrual | `4` |
+| `-p` | `POLL_INTERVAL` | интервал опроса accrual | `1s` |
+
+## Устройство
+
+```
+cmd/gophermart          точка входа
+internal/app            сборка зависимостей, graceful shutdown
+internal/config         флаги и переменные окружения
+internal/handler        HTTP-хендлеры (net/http ServeMux), логирование, gzip, recover
+internal/auth           JWT, middleware аутентификации
+internal/password       хеширование паролей (bcrypt)
+internal/service        бизнес-логика
+internal/storage/postgres  PostgreSQL (pgx), миграции (golang-migrate, embed)
+internal/accrual        клиент системы начислений и фоновый воркер
+internal/ratelimit      пауза запросов к внешней системе после 429
+internal/model          доменные сущности и ошибки
+internal/luhn           проверка номеров алгоритмом Луна
+```
+
+- Аутентификация: JWT выдаётся при регистрации/логине в заголовке `Authorization: Bearer …`
+  и в cookie `token`; принимается любой из двух способов.
+- Баллы хранятся в сотых долях (`BIGINT`), в JSON — десятичным числом, чтобы избежать ошибок округления float.
+- Таблицы лежат в схеме `gophermart`, т. к. accrual в автотестах использует ту же базу.
+- Воркер опрашивает accrual через `errgroup.SetLimit`; при `429` все запросы приостанавливаются на `Retry-After`.
+  Начисление баллов и смена статуса заказа выполняются в одной транзакции и только из нефинального
+  статуса, поэтому баллы не начисляются дважды. Списание блокирует строку пользователя (`FOR UPDATE`),
+  и баланс не может уйти в минус.
+
+## Тесты
+
+```sh
+go test -race -cover ./...                 # юнит-тесты
+go test -tags integration -race ./...      # + интеграционные (нужен Docker, testcontainers)
+go generate ./...                          # перегенерировать моки (mockgen)
+```
+
+## Обновление шаблона
 
 ```
 git remote add -m master template https://github.com/yandex-praktikum/go-musthave-diploma-tpl.git
-```
-
-Для обновления кода автотестов выполните команду:
-
-```
 git fetch template && git checkout template/master .github
 ```
-
-Затем добавьте полученные изменения в свой репозиторий.
