@@ -10,8 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
-	"github.com/arigatory/go-musthave-diploma/internal/auth"
 	"github.com/arigatory/go-musthave-diploma/internal/model"
+	"github.com/arigatory/go-musthave-diploma/internal/password"
 )
 
 var errDB = errors.New("db down")
@@ -28,7 +28,7 @@ func TestRegister(t *testing.T) {
 
 	store.EXPECT().CreateUser(ctx, "alice", gomock.Any()).DoAndReturn(
 		func(_ any, _ string, hash string) (int64, error) {
-			assert.True(t, auth.CheckPassword(hash, "pw"))
+			assert.True(t, password.Check(hash, "pw"))
 			return 1, nil
 		})
 	id, err := svc.Register(ctx, "alice", "pw")
@@ -48,10 +48,10 @@ func TestRegister(t *testing.T) {
 func TestLogin(t *testing.T) {
 	svc, store := newService(t)
 	ctx := t.Context()
-	hash, err := auth.HashPassword("pw")
+	hash, err := password.Hash("pw")
 	require.NoError(t, err)
 
-	store.EXPECT().GetUserByLogin(ctx, "alice").Return(model.User{ID: 5, Login: "alice", PasswordHash: hash}, nil).Times(2)
+	store.EXPECT().UserByLogin(ctx, "alice").Return(model.User{ID: 5, Login: "alice", PasswordHash: hash}, nil).Times(2)
 	id, err := svc.Login(ctx, "alice", "pw")
 	require.NoError(t, err)
 	assert.Equal(t, int64(5), id)
@@ -59,11 +59,11 @@ func TestLogin(t *testing.T) {
 	_, err = svc.Login(ctx, "alice", "wrong")
 	assert.ErrorIs(t, err, model.ErrInvalidCredentials)
 
-	store.EXPECT().GetUserByLogin(ctx, "ghost").Return(model.User{}, model.ErrUserNotFound)
+	store.EXPECT().UserByLogin(ctx, "ghost").Return(model.User{}, model.ErrUserNotFound)
 	_, err = svc.Login(ctx, "ghost", "pw")
 	assert.ErrorIs(t, err, model.ErrInvalidCredentials)
 
-	store.EXPECT().GetUserByLogin(ctx, "alice").Return(model.User{}, errDB)
+	store.EXPECT().UserByLogin(ctx, "alice").Return(model.User{}, errDB)
 	_, err = svc.Login(ctx, "alice", "pw")
 	assert.ErrorIs(t, err, errDB)
 
@@ -94,7 +94,7 @@ func TestQueries(t *testing.T) {
 
 	store.EXPECT().ListOrders(ctx, int64(1)).Return(orders, nil)
 	store.EXPECT().ListWithdrawals(ctx, int64(1)).Return(withdrawals, nil)
-	store.EXPECT().GetBalance(ctx, int64(1)).Return(balance, nil)
+	store.EXPECT().Balance(ctx, int64(1)).Return(balance, nil)
 
 	gotOrders, err := svc.Orders(ctx, 1)
 	require.NoError(t, err)

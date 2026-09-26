@@ -13,7 +13,7 @@ import (
 	"github.com/arigatory/go-musthave-diploma/internal/model"
 )
 
-func TestClientGetOrder(t *testing.T) {
+func TestClientOrder(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		number := strings.TrimPrefix(r.URL.Path, "/api/orders/")
 		switch number {
@@ -40,34 +40,34 @@ func TestClientGetOrder(t *testing.T) {
 	c := NewClient(srv.URL+"/", nil)
 	ctx := t.Context()
 
-	res, err := c.GetOrder(ctx, "1")
+	res, err := c.Order(ctx, "1")
 	require.NoError(t, err)
 	assert.Equal(t, StatusProcessed, res.Status)
 	require.NotNil(t, res.Accrual)
 	assert.Equal(t, model.Amount(72998), *res.Accrual)
 
-	res, err = c.GetOrder(ctx, "2")
+	res, err = c.Order(ctx, "2")
 	require.NoError(t, err)
 	assert.Equal(t, StatusInvalid, res.Status)
 	assert.Nil(t, res.Accrual)
 
-	_, err = c.GetOrder(ctx, "3")
+	_, err = c.Order(ctx, "3")
 	assert.ErrorIs(t, err, ErrNotRegistered)
 
-	_, err = c.GetOrder(ctx, "4")
+	_, err = c.Order(ctx, "4")
 	var rl *RateLimitError
 	require.ErrorAs(t, err, &rl)
 	assert.Equal(t, time.Minute, rl.RetryAfter)
 	assert.Contains(t, rl.Error(), "1m0s")
 
-	_, err = c.GetOrder(ctx, "5")
+	_, err = c.Order(ctx, "5")
 	require.ErrorAs(t, err, &rl)
 	assert.Equal(t, DefaultRetryAfter, rl.RetryAfter)
 
-	_, err = c.GetOrder(ctx, "6")
+	_, err = c.Order(ctx, "6")
 	assert.ErrorContains(t, err, "decode")
 
-	_, err = c.GetOrder(ctx, "7")
+	_, err = c.Order(ctx, "7")
 	assert.ErrorContains(t, err, "unexpected accrual status 500")
 }
 
@@ -78,13 +78,13 @@ func TestClientAddsScheme(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(strings.TrimPrefix(srv.URL, "http://"), srv.Client())
-	_, err := c.GetOrder(t.Context(), "1")
+	_, err := c.Order(t.Context(), "1")
 	assert.ErrorIs(t, err, ErrNotRegistered)
 }
 
 func TestClientTransportError(t *testing.T) {
 	c := NewClient("http://127.0.0.1:1", nil)
-	_, err := c.GetOrder(t.Context(), "1")
+	_, err := c.Order(t.Context(), "1")
 	assert.ErrorContains(t, err, "request accrual")
 }
 

@@ -11,18 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPassword(t *testing.T) {
-	hash, err := HashPassword("secret")
-	require.NoError(t, err)
-	assert.NotEqual(t, "secret", hash)
-	assert.True(t, CheckPassword(hash, "secret"))
-	assert.False(t, CheckPassword(hash, "wrong"))
-	assert.False(t, CheckPassword("not-a-hash", "secret"))
-
-	_, err = HashPassword(string(make([]byte, 100)))
-	assert.Error(t, err, "bcrypt rejects passwords longer than 72 bytes")
-}
-
 func TestTokenRoundTrip(t *testing.T) {
 	m := NewTokenManager("key", time.Hour)
 	assert.Equal(t, time.Hour, m.TTL())

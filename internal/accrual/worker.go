@@ -3,15 +3,22 @@ package accrual
 import (
 	"context"
 	"errors"
-	"sync"
 	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/arigatory/go-musthave-diploma/internal/model"
+	"github.com/arigatory/go-musthave-diploma/internal/ratelimit"
 )
 
-//go:generate go tool mockgen -destination=mock_test.go -package=accrual . Store,OrderGetter
+//go:generate go tool mockgen -destination=mock_test.go -package=accrual . Store,OrderSource
+
+// batchPerWorker is how many pending orders are loaded per worker in one
+// polling round. It keeps every worker busy for a few requests per round
+// without loading the whole backlog into memory; orders not taken now are
+// picked up in the next rounds (least recently checked first).
+const batchPerWorker = 10
 
 // Store is the persistence used by Worker.
 type Store interface {
@@ -21,10 +28,10 @@ type Store interface {
 	UpdateOrderAccrual(ctx context.Context, number string, status model.OrderStatus, accrual *model.Amount) error
 }
 
-// OrderGetter fetches the accrual state of an order.
-type OrderGetter interface {
-	// GetOrder returns the accrual state of the order.
-	GetOrder(ctx context.Context, number string) (Result, error)
+// OrderSource fetches the accrual state of an order.
+type OrderSource interface {
+	// Order returns the accrual state of the order.
+	Order(ctx context.Context, number string) (Result, error)
 }
 
 // Worker periodically polls the accrual system for orders that are not in
@@ -32,19 +39,17 @@ type OrderGetter interface {
 // of the accrual system by pausing all requests for the Retry-After period.
 type Worker struct {
 	store    Store
-	client   OrderGetter
+	client   OrderSource
 	log      *zap.Logger
 	workers  int
 	interval time.Duration
 	batch    int
-
-	mu         sync.Mutex
-	pauseUntil time.Time
+	limiter  ratelimit.Limiter
 }
 
 // NewWorker creates a Worker running the given number of concurrent
 // requests every interval.
-func NewWorker(store Store, client OrderGetter, log *zap.Logger, workers int, interval time.Duration) *Worker {
+func NewWorker(store Store, client OrderSource, log *zap.Logger, workers int, interval time.Duration) *Worker {
 	if workers < 1 {
 		workers = 1
 	}
@@ -54,7 +59,7 @@ func NewWorker(store Store, client OrderGetter, log *zap.Logger, workers int, in
 		log:      log,
 		workers:  workers,
 		interval: interval,
-		batch:    workers * 10,
+		batch:    workers * batchPerWorker,
 	}
 }
 
@@ -63,7 +68,7 @@ func (w *Worker) Run(ctx context.Context) {
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
 	for {
-		w.waitPause(ctx)
+		w.limiter.Wait(ctx)
 		w.poll(ctx)
 		select {
 		case <-ctx.Done():
@@ -73,7 +78,8 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
-// poll processes one batch of pending orders using a pool of goroutines.
+// poll processes one batch of pending orders with at most w.workers
+// concurrent requests.
 func (w *Worker) poll(ctx context.Context) {
 	if ctx.Err() != nil {
 		return
@@ -85,39 +91,31 @@ func (w *Worker) poll(ctx context.Context) {
 		}
 		return
 	}
-	if len(orders) == 0 {
-		return
-	}
 
-	jobs := make(chan model.Order)
-	var wg sync.WaitGroup
-	for range min(w.workers, len(orders)) {
-		wg.Go(func() {
-			for o := range jobs {
-				w.process(ctx, o)
-			}
-		})
-	}
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(w.workers)
 	for _, o := range orders {
-		if ctx.Err() != nil || w.paused() {
+		if gctx.Err() != nil || w.limiter.Paused() {
 			break
 		}
-		jobs <- o
+		g.Go(func() error {
+			w.process(gctx, o)
+			return nil
+		})
 	}
-	close(jobs)
-	wg.Wait()
+	_ = g.Wait() // process never returns errors, it logs them
 }
 
 // process checks one order in the accrual system and stores the result.
 func (w *Worker) process(ctx context.Context, o model.Order) {
-	if w.paused() {
+	if w.limiter.Paused() {
 		return
 	}
-	res, err := w.client.GetOrder(ctx, o.Number)
+	res, err := w.client.Order(ctx, o.Number)
 	var rl *RateLimitError
 	switch {
 	case errors.As(err, &rl):
-		w.pause(rl.RetryAfter)
+		w.limiter.Hit(rl.RetryAfter)
 		w.log.Warn("accrual rate limit", zap.Duration("retry_after", rl.RetryAfter))
 		return
 	case errors.Is(err, ErrNotRegistered):
@@ -160,35 +158,5 @@ func mapStatus(s string) (model.OrderStatus, bool) {
 		return model.StatusProcessed, true
 	default:
 		return "", false
-	}
-}
-
-func (w *Worker) pause(d time.Duration) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if until := time.Now().Add(d); until.After(w.pauseUntil) {
-		w.pauseUntil = until
-	}
-}
-
-func (w *Worker) paused() bool {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return time.Now().Before(w.pauseUntil)
-}
-
-// waitPause blocks until the rate limit pause is over or ctx is cancelled.
-func (w *Worker) waitPause(ctx context.Context) {
-	w.mu.Lock()
-	d := time.Until(w.pauseUntil)
-	w.mu.Unlock()
-	if d <= 0 {
-		return
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-	case <-t.C:
 	}
 }

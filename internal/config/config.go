@@ -5,7 +5,9 @@ package config
 import (
 	"errors"
 	"flag"
+	"fmt"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -69,6 +71,13 @@ func Load(args []string, getenv func(string) string) (*Config, error) {
 	stringFromEnv(getenv, "ACCRUAL_SYSTEM_ADDRESS", &cfg.AccrualSystemAddress)
 	stringFromEnv(getenv, "JWT_SECRET", &cfg.JWTSecret)
 	stringFromEnv(getenv, "LOG_LEVEL", &cfg.LogLevel)
+	if err := errors.Join(
+		fromEnv(getenv, "TOKEN_TTL", "duration", time.ParseDuration, &cfg.TokenTTL),
+		fromEnv(getenv, "ACCRUAL_WORKERS", "number", strconv.Atoi, &cfg.Workers),
+		fromEnv(getenv, "POLL_INTERVAL", "duration", time.ParseDuration, &cfg.PollInterval),
+	); err != nil {
+		return nil, err
+	}
 
 	if cfg.DatabaseURI == "" {
 		return nil, ErrNoDatabaseURI
@@ -88,4 +97,20 @@ func stringFromEnv(getenv func(string) string, key string, dst *string) {
 	if v := getenv(key); v != "" {
 		*dst = v
 	}
+}
+
+// fromEnv parses the environment variable key with parse and stores the
+// result in dst. An unset variable leaves dst unchanged; an unparsable one
+// is reported as "KEY: not a <kind>".
+func fromEnv[T any](getenv func(string) string, key, kind string, parse func(string) (T, error), dst *T) error {
+	v := getenv(key)
+	if v == "" {
+		return nil
+	}
+	parsed, err := parse(v)
+	if err != nil {
+		return fmt.Errorf("%s: not a %s: %q", key, kind, v)
+	}
+	*dst = parsed
+	return nil
 }

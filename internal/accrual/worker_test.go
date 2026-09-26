@@ -16,10 +16,10 @@ import (
 
 func amount(a model.Amount) *model.Amount { return &a }
 
-func newWorker(t *testing.T, workers int) (*Worker, *MockStore, *MockOrderGetter) {
+func newWorker(t *testing.T, workers int) (*Worker, *MockStore, *MockOrderSource) {
 	ctrl := gomock.NewController(t)
 	store := NewMockStore(ctrl)
-	client := NewMockOrderGetter(ctrl)
+	client := NewMockOrderSource(ctrl)
 	return NewWorker(store, client, zap.NewNop(), workers, 10*time.Millisecond), store, client
 }
 
@@ -45,7 +45,7 @@ func TestProcessMapsStatuses(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			w, store, client := newWorker(t, 1)
 			ctx := t.Context()
-			client.EXPECT().GetOrder(ctx, "1").Return(tt.res, tt.err)
+			client.EXPECT().Order(ctx, "1").Return(tt.res, tt.err)
 			if !tt.noUpdate {
 				store.EXPECT().UpdateOrderAccrual(ctx, "1", tt.wantStatus, tt.wantAcc).Return(nil)
 			}
@@ -57,7 +57,7 @@ func TestProcessMapsStatuses(t *testing.T) {
 func TestProcessUpdateError(t *testing.T) {
 	w, store, client := newWorker(t, 1)
 	ctx := t.Context()
-	client.EXPECT().GetOrder(ctx, "1").Return(Result{Status: StatusInvalid}, nil)
+	client.EXPECT().Order(ctx, "1").Return(Result{Status: StatusInvalid}, nil)
 	store.EXPECT().UpdateOrderAccrual(ctx, "1", model.StatusInvalid, nil).Return(errors.New("db"))
 	w.process(ctx, model.Order{Number: "1"})
 }
@@ -66,26 +66,10 @@ func TestRateLimitPausesWorker(t *testing.T) {
 	w, store, client := newWorker(t, 1)
 	ctx := t.Context()
 	store.EXPECT().PendingOrders(ctx, 10).Return([]model.Order{{Number: "1"}, {Number: "2"}, {Number: "3"}}, nil)
-	client.EXPECT().GetOrder(ctx, "1").Return(Result{}, &RateLimitError{RetryAfter: time.Hour})
+	client.EXPECT().Order(gomock.Any(), "1").Return(Result{}, &RateLimitError{RetryAfter: time.Hour})
 
 	w.poll(ctx)
-	assert.True(t, w.paused(), "remaining orders are skipped while paused")
-
-	w.pause(time.Minute)
-	assert.Greater(t, time.Until(w.pauseUntil), 59*time.Minute, "shorter pause does not shrink the longer one")
-
-	cctx, cancel := context.WithCancel(ctx)
-	cancel()
-	w.waitPause(cctx) // returns immediately on cancelled context
-}
-
-func TestWaitPauseExpires(t *testing.T) {
-	w, _, _ := newWorker(t, 1)
-	w.pause(20 * time.Millisecond)
-	start := time.Now()
-	w.waitPause(t.Context())
-	assert.GreaterOrEqual(t, time.Since(start), 15*time.Millisecond)
-	assert.False(t, w.paused())
+	assert.True(t, w.limiter.Paused(), "remaining orders are skipped while paused")
 }
 
 func TestPollErrors(t *testing.T) {
@@ -116,7 +100,7 @@ func TestRunProcessesOrdersConcurrently(t *testing.T) {
 			return orders, nil
 		}).MinTimes(1)
 	var updated atomic.Int32
-	client.EXPECT().GetOrder(gomock.Any(), gomock.Any()).Return(Result{Status: StatusProcessed, Accrual: amount(100)}, nil).Times(4)
+	client.EXPECT().Order(gomock.Any(), gomock.Any()).Return(Result{Status: StatusProcessed, Accrual: amount(100)}, nil).Times(4)
 	store.EXPECT().UpdateOrderAccrual(gomock.Any(), gomock.Any(), model.StatusProcessed, amount(100)).
 		DoAndReturn(func(context.Context, string, model.OrderStatus, *model.Amount) error {
 			if updated.Add(1) == 4 {

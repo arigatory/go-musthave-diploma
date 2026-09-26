@@ -39,15 +39,15 @@ func TestStorage(t *testing.T) {
 		_, err := s.CreateUser(ctx, "alice", "other")
 		assert.ErrorIs(t, err, model.ErrLoginTaken)
 
-		u, err := s.GetUserByLogin(ctx, "alice")
+		u, err := s.UserByLogin(ctx, "alice")
 		require.NoError(t, err)
 		assert.Equal(t, alice, u.ID)
 		assert.Equal(t, "hash", u.PasswordHash)
 
-		_, err = s.GetUserByLogin(ctx, "nobody")
+		_, err = s.UserByLogin(ctx, "nobody")
 		assert.ErrorIs(t, err, model.ErrUserNotFound)
 
-		_, err = s.GetBalance(ctx, 999999)
+		_, err = s.Balance(ctx, 999999)
 		assert.ErrorIs(t, err, model.ErrUserNotFound)
 	})
 
@@ -80,7 +80,7 @@ func TestStorage(t *testing.T) {
 		// A repeated final update must not credit the points twice.
 		require.NoError(t, s.UpdateOrderAccrual(ctx, "12345678903", model.StatusProcessed, &acc))
 
-		b, err := s.GetBalance(ctx, alice)
+		b, err := s.Balance(ctx, alice)
 		require.NoError(t, err)
 		assert.Equal(t, model.Balance{Current: 72998}, b)
 
@@ -106,7 +106,7 @@ func TestStorage(t *testing.T) {
 		assert.ErrorIs(t, s.Withdraw(ctx, alice, "12345678903", 1_000_000), model.ErrInsufficientFunds)
 		assert.ErrorIs(t, s.Withdraw(ctx, 999999, "12345678903", 1), model.ErrUserNotFound)
 
-		b, err := s.GetBalance(ctx, alice)
+		b, err := s.Balance(ctx, alice)
 		require.NoError(t, err)
 		assert.Equal(t, model.Balance{Current: 60000, Withdrawn: 12998}, b)
 
@@ -147,7 +147,7 @@ func TestConcurrentWithdrawalsNeverOverdraw(t *testing.T) {
 
 	assert.Equal(t, int32(10), ok.Load())
 	assert.Equal(t, int32(10), insufficient.Load())
-	b, err := s.GetBalance(ctx, id)
+	b, err := s.Balance(ctx, id)
 	require.NoError(t, err)
 	assert.Equal(t, model.Balance{Current: 0, Withdrawn: 1000}, b)
 }
@@ -168,7 +168,35 @@ func TestConcurrentAccrualCreditsOnce(t *testing.T) {
 	}
 	wg.Wait()
 
-	b, err := s.GetBalance(ctx, id)
+	b, err := s.Balance(ctx, id)
 	require.NoError(t, err)
 	assert.Equal(t, model.Amount(500), b.Current)
+}
+
+func TestConcurrentAddOrderSameNumber(t *testing.T) {
+	s := newStorage(t)
+	ctx := t.Context()
+	id, err := s.CreateUser(ctx, "erin", "hash")
+	require.NoError(t, err)
+
+	const attempts = 10
+	var added, duplicate atomic.Int32
+	var wg sync.WaitGroup
+	for range attempts {
+		wg.Go(func() {
+			err := s.AddOrder(ctx, id, "12345678903")
+			switch {
+			case err == nil:
+				added.Add(1)
+			case errors.Is(err, model.ErrOrderAlreadyUploaded):
+				duplicate.Add(1)
+			default:
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+	wg.Wait()
+
+	assert.Equal(t, int32(1), added.Load())
+	assert.Equal(t, int32(attempts-1), duplicate.Load())
 }

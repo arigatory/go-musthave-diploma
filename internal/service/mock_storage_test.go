@@ -55,6 +55,21 @@ func (mr *MockStorageMockRecorder) AddOrder(ctx, userID, number any) *gomock.Cal
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddOrder", reflect.TypeOf((*MockStorage)(nil).AddOrder), ctx, userID, number)
 }
 
+// Balance mocks base method.
+func (m *MockStorage) Balance(ctx context.Context, userID int64) (model.Balance, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Balance", ctx, userID)
+	ret0, _ := ret[0].(model.Balance)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// Balance indicates an expected call of Balance.
+func (mr *MockStorageMockRecorder) Balance(ctx, userID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Balance", reflect.TypeOf((*MockStorage)(nil).Balance), ctx, userID)
+}
+
 // CreateUser mocks base method.
 func (m *MockStorage) CreateUser(ctx context.Context, login, passwordHash string) (int64, error) {
 	m.ctrl.T.Helper()
@@ -68,36 +83,6 @@ func (m *MockStorage) CreateUser(ctx context.Context, login, passwordHash string
 func (mr *MockStorageMockRecorder) CreateUser(ctx, login, passwordHash any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CreateUser", reflect.TypeOf((*MockStorage)(nil).CreateUser), ctx, login, passwordHash)
-}
-
-// GetBalance mocks base method.
-func (m *MockStorage) GetBalance(ctx context.Context, userID int64) (model.Balance, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetBalance", ctx, userID)
-	ret0, _ := ret[0].(model.Balance)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetBalance indicates an expected call of GetBalance.
-func (mr *MockStorageMockRecorder) GetBalance(ctx, userID any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBalance", reflect.TypeOf((*MockStorage)(nil).GetBalance), ctx, userID)
-}
-
-// GetUserByLogin mocks base method.
-func (m *MockStorage) GetUserByLogin(ctx context.Context, login string) (model.User, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetUserByLogin", ctx, login)
-	ret0, _ := ret[0].(model.User)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetUserByLogin indicates an expected call of GetUserByLogin.
-func (mr *MockStorageMockRecorder) GetUserByLogin(ctx, login any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetUserByLogin", reflect.TypeOf((*MockStorage)(nil).GetUserByLogin), ctx, login)
 }
 
 // ListOrders mocks base method.
@@ -128,6 +113,21 @@ func (m *MockStorage) ListWithdrawals(ctx context.Context, userID int64) ([]mode
 func (mr *MockStorageMockRecorder) ListWithdrawals(ctx, userID any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListWithdrawals", reflect.TypeOf((*MockStorage)(nil).ListWithdrawals), ctx, userID)
+}
+
+// UserByLogin mocks base method.
+func (m *MockStorage) UserByLogin(ctx context.Context, login string) (model.User, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UserByLogin", ctx, login)
+	ret0, _ := ret[0].(model.User)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// UserByLogin indicates an expected call of UserByLogin.
+func (mr *MockStorageMockRecorder) UserByLogin(ctx, login any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UserByLogin", reflect.TypeOf((*MockStorage)(nil).UserByLogin), ctx, login)
 }
 
 // Withdraw mocks base method.

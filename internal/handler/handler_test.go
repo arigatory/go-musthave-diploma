@@ -228,7 +228,7 @@ func TestListOrders(t *testing.T) {
 	})
 }
 
-func TestGetBalance(t *testing.T) {
+func TestBalance(t *testing.T) {
 	t.Run("ok", func(t *testing.T) {
 		e := newEnv(t)
 		e.svc.EXPECT().Balance(gomock.Any(), userID).Return(model.Balance{Current: 50050, Withdrawn: 4200}, nil)
@@ -336,4 +336,48 @@ func TestGzip(t *testing.T) {
 	w = httptest.NewRecorder()
 	e.router.ServeHTTP(w, r)
 	assert.Equal(t, http.StatusBadRequest, w.Code, "malformed gzip body")
+}
+
+func TestRouting(t *testing.T) {
+	e := newEnv(t)
+	resp := e.do(t, http.MethodDelete, "/api/user/orders", "", true)
+	resp.Body.Close()
+	assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+
+	resp = e.do(t, http.MethodGet, "/api/unknown", "", true)
+	resp.Body.Close()
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+}
+
+func TestRecoverer(t *testing.T) {
+	h := Recoverer(zap.NewNop())(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("boom")
+	}))
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/", nil))
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestCompressSkipsEmptyAndBinaryResponses(t *testing.T) {
+	e := newEnv(t)
+	e.svc.EXPECT().Orders(gomock.Any(), userID).Return(nil, nil)
+	r := httptest.NewRequest(http.MethodGet, "/api/user/orders", nil)
+	r.Header.Set("Authorization", "Bearer "+e.token)
+	r.Header.Set("Accept-Encoding", "gzip")
+	w := httptest.NewRecorder()
+	e.router.ServeHTTP(w, r)
+	assert.Equal(t, http.StatusNoContent, w.Code)
+	assert.Empty(t, w.Header().Get("Content-Encoding"), "204 has no body to compress")
+	assert.Zero(t, w.Body.Len())
+
+	h := Compress(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write([]byte("png"))
+	}))
+	r = httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("Accept-Encoding", "gzip")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	assert.Empty(t, w.Header().Get("Content-Encoding"), "only JSON and plain text are compressed")
+	assert.Equal(t, "png", w.Body.String())
 }

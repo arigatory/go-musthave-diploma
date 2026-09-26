@@ -1,3 +1,5 @@
+// Package auth issues and verifies JWT authentication tokens and provides
+// an HTTP middleware that authenticates requests.
 package auth
 
 import (

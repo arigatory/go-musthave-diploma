@@ -9,8 +9,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
 	"go.uber.org/zap"
 
 	"github.com/arigatory/go-musthave-diploma/internal/auth"
@@ -54,26 +52,18 @@ func New(svc Service, tokens *auth.TokenManager, log *zap.Logger) *Handler {
 
 // Router returns the HTTP router with all API routes and middlewares.
 func (h *Handler) Router() http.Handler {
-	r := chi.NewRouter()
-	r.Use(middleware.Recoverer)
-	r.Use(Logging(h.log))
-	r.Use(Decompress)
-	r.Use(middleware.Compress(5, "application/json", "text/plain"))
+	authed := func(f http.HandlerFunc) http.Handler { return h.tokens.Middleware(f) }
 
-	r.Route("/api/user", func(r chi.Router) {
-		r.Post("/register", h.Register)
-		r.Post("/login", h.Login)
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/user/register", h.Register)
+	mux.HandleFunc("POST /api/user/login", h.Login)
+	mux.Handle("POST /api/user/orders", authed(h.UploadOrder))
+	mux.Handle("GET /api/user/orders", authed(h.ListOrders))
+	mux.Handle("GET /api/user/balance", authed(h.Balance))
+	mux.Handle("POST /api/user/balance/withdraw", authed(h.Withdraw))
+	mux.Handle("GET /api/user/withdrawals", authed(h.ListWithdrawals))
 
-		r.Group(func(r chi.Router) {
-			r.Use(h.tokens.Middleware)
-			r.Post("/orders", h.UploadOrder)
-			r.Get("/orders", h.ListOrders)
-			r.Get("/balance", h.GetBalance)
-			r.Post("/balance/withdraw", h.Withdraw)
-			r.Get("/withdrawals", h.ListWithdrawals)
-		})
-	})
-	return r
+	return Logging(h.log)(Recoverer(h.log)(Decompress(Compress(mux))))
 }
 
 type credentials struct {
@@ -171,8 +161,8 @@ func (h *Handler) ListOrders(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, orders)
 }
 
-// GetBalance handles GET /api/user/balance.
-func (h *Handler) GetBalance(w http.ResponseWriter, r *http.Request) {
+// Balance handles GET /api/user/balance.
+func (h *Handler) Balance(w http.ResponseWriter, r *http.Request) {
 	balance, err := h.svc.Balance(r.Context(), userIDFrom(r))
 	if err != nil {
 		h.internalError(w, "get balance", err)

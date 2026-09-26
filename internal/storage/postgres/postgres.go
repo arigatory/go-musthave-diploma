@@ -66,8 +66,8 @@ func (s *Storage) CreateUser(ctx context.Context, login, passwordHash string) (i
 	return id, nil
 }
 
-// GetUserByLogin returns the user with the given login or model.ErrUserNotFound.
-func (s *Storage) GetUserByLogin(ctx context.Context, login string) (model.User, error) {
+// UserByLogin returns the user with the given login or model.ErrUserNotFound.
+func (s *Storage) UserByLogin(ctx context.Context, login string) (model.User, error) {
 	u := model.User{Login: login}
 	err := s.pool.QueryRow(ctx,
 		`SELECT id, password_hash FROM gophermart.users WHERE login = $1`, login,
@@ -81,31 +81,52 @@ func (s *Storage) GetUserByLogin(ctx context.Context, login string) (model.User,
 	return u, nil
 }
 
+// addOrderQuery inserts an order and returns its owner in one round trip.
+// If the number is new, the row comes from the INSERT with inserted = true.
+// Otherwise ON CONFLICT DO NOTHING inserts nothing and the second branch
+// returns the existing owner with inserted = false; NOT EXISTS guarantees
+// exactly one row.
+const addOrderQuery = `
+WITH ins AS (
+	INSERT INTO gophermart.orders (number, user_id, status) VALUES ($1, $2, $3)
+	ON CONFLICT (number) DO NOTHING
+	RETURNING user_id
+)
+SELECT user_id, true FROM ins
+UNION ALL
+SELECT user_id, false FROM gophermart.orders
+WHERE number = $1 AND NOT EXISTS (SELECT 1 FROM ins)`
+
 // AddOrder registers a new order for the user with status NEW.
 // It returns model.ErrOrderAlreadyUploaded if the user has already uploaded
 // the order and model.ErrOrderOwnedByAnother if it belongs to another user.
 func (s *Storage) AddOrder(ctx context.Context, userID int64, number string) error {
-	tag, err := s.pool.Exec(ctx,
-		`INSERT INTO gophermart.orders (number, user_id, status) VALUES ($1, $2, $3)
-		 ON CONFLICT (number) DO NOTHING`,
-		number, userID, model.StatusNew,
+	var (
+		owner    int64
+		inserted bool
 	)
+	scan := func() error {
+		return s.pool.QueryRow(ctx, addOrderQuery, number, userID, model.StatusNew).Scan(&owner, &inserted)
+	}
+	err := scan()
+	if errors.Is(err, pgx.ErrNoRows) {
+		// A concurrent transaction inserted the same number after this
+		// statement took its snapshot: ON CONFLICT waited for it, but the
+		// SELECT branch cannot see the row yet. It is committed now, so
+		// a retry finds the owner.
+		err = scan()
+	}
 	if err != nil {
 		return fmt.Errorf("insert order: %w", err)
 	}
-	if tag.RowsAffected() == 1 {
+	switch {
+	case inserted:
 		return nil
-	}
-	var owner int64
-	if err := s.pool.QueryRow(ctx,
-		`SELECT user_id FROM gophermart.orders WHERE number = $1`, number,
-	).Scan(&owner); err != nil {
-		return fmt.Errorf("select order owner: %w", err)
-	}
-	if owner == userID {
+	case owner == userID:
 		return model.ErrOrderAlreadyUploaded
+	default:
+		return model.ErrOrderOwnedByAnother
 	}
-	return model.ErrOrderOwnedByAnother
 }
 
 // ListOrders returns the user's orders sorted from newest to oldest.
@@ -135,8 +156,8 @@ func (s *Storage) ListOrders(ctx context.Context, userID int64) ([]model.Order, 
 	return orders, nil
 }
 
-// GetBalance returns the user's current balance and total withdrawn amount.
-func (s *Storage) GetBalance(ctx context.Context, userID int64) (model.Balance, error) {
+// Balance returns the user's current balance and total withdrawn amount.
+func (s *Storage) Balance(ctx context.Context, userID int64) (model.Balance, error) {
 	var b model.Balance
 	err := s.pool.QueryRow(ctx,
 		`SELECT balance, withdrawn FROM gophermart.users WHERE id = $1`, userID,

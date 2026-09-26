@@ -75,10 +75,10 @@ func NewClient(address string, httpClient *http.Client) *Client {
 	return &Client{baseURL: strings.TrimRight(address, "/"), http: httpClient}
 }
 
-// GetOrder requests the accrual calculation state of the order.
+// Order requests the accrual calculation state of the order.
 // It returns ErrNotRegistered for 204 No Content and *RateLimitError for
 // 429 Too Many Requests.
-func (c *Client) GetOrder(ctx context.Context, number string) (Result, error) {
+func (c *Client) Order(ctx context.Context, number string) (Result, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		c.baseURL+"/api/orders/"+url.PathEscape(number), nil)
 	if err != nil {
